@@ -58,7 +58,7 @@ typedef struct LexState {
   int lastline;  /* line of last token `consumed' */
   Token t;  /* current token */
   Token lookahead;  /* look ahead token */
-  struct FuncState *fs;  /* `FuncState' is private to the parser */
+  struct FuncState *fs;  /* 目前解析的函数的FuncState `FuncState' is private to the parser */
   struct lua_State *L;
   ZIO *z;  /* input stream */
   Mbuffer *buff;  /* buffer for tokens */

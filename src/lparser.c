@@ -28,7 +28,7 @@
 
 // 在函数调用,或者可变参数的情况下允许多返回值
 #define hasmultret(k)		((k) == VCALL || (k) == VVARARG)
-
+// 获取第i个变量的LocVar结构体
 #define getlocvar(fs, i)	((fs)->f->locvars[(fs)->actvar[i]])
 
 #define luaY_checklimit(fs,v,l,m)	if ((v)>(l)) errorlimit(fs,l,m)
@@ -86,6 +86,7 @@ static int testnext (LexState *ls, int c) {
 }
 
 
+// 检查当前token是否是指定类型
 static void check (LexState *ls, int c) {
   if (ls->t.token != c)
     error_expected(ls, c);
@@ -129,17 +130,20 @@ static void init_exp (expdesc *e, expkind k, int i) {
   e->u.s.info = i;
 }
 
-
+// 把e的类型设为VK, e的值设为字符串s在常量表中的下标
 static void codestring (LexState *ls, expdesc *e, TString *s) {
   init_exp(e, VK, luaK_stringK(ls->fs, s));
 }
 
-
+// 确认当前token的类型为变量名, 然后把e的类型设为VK, e的值设为当前token在常量表中的下标
 static void checkname(LexState *ls, expdesc *e) {
   codestring(ls, e, str_checkname(ls));
 }
 
 // 注册局部变量
+// fs->nlocvars记录目前局部变量的数量，也是下一个局部变量在数组f->locvars中的位置
+// 由于现在只有变量名，所以把f->locvars[fs->nlocvars]这个结构体的varname成员设为参数varname，
+// 然后fs->nlocvars加1, 返回自增前的fs->nlocvars, 也就是该局部变量在f->locvars中的下标
 static int registerlocalvar (LexState *ls, TString *varname) {
   FuncState *fs = ls->fs;
   Proto *f = fs->f;
@@ -156,11 +160,18 @@ static int registerlocalvar (LexState *ls, TString *varname) {
   return fs->nlocvars++;
 }
 
-
+// 调用registerlocalvar, 把字符串v存入数组Proto->locvars适当的位置，获得下标，
+// 把下标存入fs->actvar[fs->nactvar+n]
+// fs->actvar存放所有在栈上的变量的位置，fs->nactvar是已存入栈上的变量数量，
+// n代表是第fs->nactvar + n + 1个变量
 #define new_localvarliteral(ls,v,n) \
   new_localvar(ls, luaX_newstring(ls, "" v, (sizeof(v)/sizeof(char))-1), n)
 
 // 分配新的局部变量
+// 调用registerlocalvar, 把局部变量存入数组Proto->locvars适当的位置，获得下标，
+// 把下标存入fs->actvar[fs->nactvar+n]
+// fs->actvar存放所有在栈上的变量的位置，fs->nactvar是已存入栈上的变量数量，
+// n代表新局部变量是第fs->nactvar + n + 1个变量
 static void new_localvar (LexState *ls, TString *name, int n) {
   FuncState *fs = ls->fs;
   // 判断局部变量的数量不超过LUAI_MAXVARS
@@ -169,6 +180,7 @@ static void new_localvar (LexState *ls, TString *name, int n) {
 }
 
 
+// FuncState->nactvar增加nvars
 static void adjustlocalvars (LexState *ls, int nvars) {
   FuncState *fs = ls->fs;
   fs->nactvar = cast_byte(fs->nactvar + nvars);
@@ -215,6 +227,7 @@ static int indexupvalue (FuncState *fs, TString *name, expdesc *v) {
 }
 
 // 传入函数状态FuncState指针, 搜索局部变量, 搜索到则返回在locvars中的索引位置
+// 
 static int searchvar (FuncState *fs, TString *n) {
   int i;
   for (i=fs->nactvar-1; i >= 0; i--) {
@@ -235,6 +248,8 @@ static void markupval (FuncState *fs, int level) {
 
 // 搜索变量的辅助函数,只有可能三种类型:VGLOBAL(全局变量),VLOCAL(局部变量),VUPVAL(upvalue)
 // 参数base：1表示在本层函数环境中进行的查找，0表示在上层进行的查找
+// 如果变量名在本层函数环境中找到，var的类型为VLOCAL，值为寄存器下标，返回VLOCAL
+// 如果变量名在全局环境找到，var的类型为VGLOBAL, 值为NO_REG，返回VGLOBAL
 static int singlevaraux (FuncState *fs, TString *n, expdesc *var, int base) {
   if (fs == NULL) {  /* no more levels? */
 	  // 如果没有在任何函数中, 那么是全局变量
@@ -268,6 +283,8 @@ static int singlevaraux (FuncState *fs, TString *n, expdesc *var, int base) {
 }
 
 // 一个新的变量
+// 如果变量名在本层函数环境中找到，var的类型为VLOCAL，值为寄存器下标
+// 如果变量名在全局环境找到，var的类型为VGLOBAL, 值为常量表下标
 static void singlevar (LexState *ls, expdesc *var) {
   // 返回当前字符串,同时读入下一个token
   TString *varname = str_checkname(ls);
@@ -279,6 +296,7 @@ static void singlevar (LexState *ls, expdesc *var) {
 }
 
 // 调整赋值语句, nvars是=号左边表达式数量, nexps是=号右边表达式数量, e是表达式
+// 如果变量数多于表达式数量，创建LOADNIL指令，存入Proto->code, 该指令把fs->freereg开始的(nvars - nexps)个寄存器全置为nil
 static void adjust_assign (LexState *ls, int nvars, int nexps, expdesc *e) {
   FuncState *fs = ls->fs;
   int extra = nvars - nexps;
@@ -443,8 +461,14 @@ Proto *luaY_parser (lua_State *L, ZIO *z, Mbuffer *buff, const char *name) {
 /*============================================================*/
 /* GRAMMAR RULES */
 /*============================================================*/
-
-
+ 
+// field -> ['.' | ':'] NAME
+// 
+// 根据v调用luaK_exp2anyreg生成指令，这时v的值为R(A)
+// 解析NAME，存入常量数组, 获得NAME在常量数组中的下标
+// 然后我们把v的类型设为VINDEXED，v的附加信息设为NAME的下标
+// 此时一个完整的OP_GETTABLE的指令还差查表结果存放的寄存器，在后面确定
+// 而一个完整的OP_SETTABLE的指令所需的信息都已具备
 static void field (LexState *ls, expdesc *v) {
   /* field -> ['.' | ':'] NAME */
   FuncState *fs = ls->fs;
@@ -646,6 +670,9 @@ static void body (LexState *ls, expdesc *e, int needself, int line) {
 
 // 构造表达式列表,返回值是表达式的数量
 // 如果是表达式列表，则依次dump到寄存器中
+// 依次处理逗号分隔的每个表达式，把表达式的类型和值存入v，调用luaK_exp2nextreg，
+// 根据v把表达式存入栈上下一个可用位置
+// 返回表达式数量
 static int explist1 (LexState *ls, expdesc *v) {
   /* explist1 -> expr { `,' expr } */
   int n = 1;  /* at least one expression */
@@ -722,6 +749,10 @@ static void funcargs (LexState *ls, expdesc *f) {
 */
 
 // 读取一个表达式或者一个变量
+// prefixexp -> NAME | '(' expr ')' 
+// 如果token类型是NAME,那么token是变量名
+// 如果在本层函数环境中找到，v的类型为VLOCAL，值为寄存器下标
+// 如果变量名在全局环境找到，v的类型为VGLOBAL, 值为常量表下标
 static void prefixexp (LexState *ls, expdesc *v) {
   /* prefixexp -> NAME | '(' expr ')' */
   switch (ls->t.token) {
@@ -1257,7 +1288,10 @@ static void localfunc (LexState *ls) {
   getlocvar(fs, fs->nactvar - 1).startpc = fs->pc;
 }
 
-
+// 处理LOCAL NAME {`,' NAME} [`=' explist1]
+// 把变量名存入Proto->locvars,
+// 把每个逗号分隔的表达式结果存到栈上
+// FuncState->nactvar增加新增变量数
 static void localstat (LexState *ls) {
   /* stat -> LOCAL NAME {`,' NAME} [`=' explist1] */
   int nvars = 0;
@@ -1280,8 +1314,13 @@ static void localstat (LexState *ls) {
   adjustlocalvars(ls, nvars);
 }
 
-
+// funcname -> NAME {field} [`:' NAME]
 // 存放函数名到表达式v中, 返回needself表示是否需要self指针
+// 
+// 第一个NAME是变量名，调用singlevar解析后v有VLOCAL，VUPVALUE，VGLOBAL等类型
+// 之后每次遇到token是'.'或':'分隔符，就调用函数field，根据v生成指令，然后把v的类型设为
+// VINDEXED, v的附加信息设为表项在常量表中的下标
+// 所以v得类型可能是VLOCAL， VUPVALUE，VGLOBAL, VINDEXED
 static int funcname (LexState *ls, expdesc *v) {
   /* funcname -> NAME {field} [`:' NAME] */
   int needself = 0;
@@ -1296,7 +1335,8 @@ static int funcname (LexState *ls, expdesc *v) {
   return needself;
 }
 
-
+// 解析FUNCTION funcname body
+// 首先解析funcname，funcname的格式为NAME {field} [':' NAME]
 static void funcstat (LexState *ls, int line) {
   /* funcstat -> FUNCTION funcname body */
   int needself;

@@ -77,7 +77,7 @@ typedef struct FuncState {
   short nlocvars;  /* number of elements in `locvars' */
   lu_byte nactvar;  /* number of active local variables */
   upvaldesc upvalues[LUAI_MAXUPVALUES];  /* upvalues */
-  unsigned short actvar[LUAI_MAXVARS];  /* declared-variable stack */
+  unsigned short actvar[LUAI_MAXVARS];  /* declared-variable stack  FuncState->actvar每个元素的下标i代表这是第i个变量，值代表在Proto->locvars的下标 */
 } FuncState;
 
 

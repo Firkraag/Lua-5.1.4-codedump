@@ -32,6 +32,7 @@ static int isnumeral(expdesc *e) {
 }
 
 // 将from到from + n -1的寄存器都置nil
+// 创建LOADNIL指令，存入Proto->code, 该指令把from开始的n个寄存器全置为nil
 void luaK_nil (FuncState *fs, int from, int n) {
   Instruction *previous;
   // 这部分还需要看看
@@ -70,7 +71,7 @@ int luaK_jump (FuncState *fs) {
   return j;
 }
 
-
+// 生成return指令，first是第一个返回值的寄存器，nret为返回值数量
 void luaK_ret (FuncState *fs, int first, int nret) {
   luaK_codeABC(fs, OP_RETURN, first, nret+1, 0);
 }
@@ -224,6 +225,7 @@ void luaK_checkstack (FuncState *fs, int n) {
 }
 
 // 函数栈预留多少位置
+// FuncState->freereg增加n
 void luaK_reserveregs (FuncState *fs, int n) {
   luaK_checkstack(fs, n);
   fs->freereg += n;
@@ -245,6 +247,10 @@ static void freeexp (FuncState *fs, expdesc *e) {
 }
 
 // 向函数寄存器添加常量
+// FuncState->h的键为TValue，值为Proto->k的下标
+// 以k为键在FuncState->h找到值idx，如果idx为数值，则v已存于Proto->k[idx], 返回idx;
+// 如果值为nil或是值不是数值，把idx设为目前的常量数量FuncState->nk，把Proto->k[FuncState->nk]设为v，
+// 自增FuncState->nk, 返回自增前的FuncState->nk
 static int addk (FuncState *fs, TValue *k, TValue *v) {
   lua_State *L = fs->L;
   // 得到key的index
@@ -274,6 +280,8 @@ static int addk (FuncState *fs, TValue *k, TValue *v) {
 }
 
 // 创建一个字符串常量
+// 把字符串s存入lua常量数组Proto->k, 以s为键，以s在Proto->k中的下标为值往FuncState->h插入键值对
+// 返回s在Proto->k中的下标
 int luaK_stringK (FuncState *fs, TString *s) {
   TValue o;
   setsvalue(fs->L, &o, s);
@@ -281,6 +289,8 @@ int luaK_stringK (FuncState *fs, TString *s) {
 }
 
 // 向FuncState添加一个数字常量
+// 把数值r存入lua常量数组Proto->k, 以r为键，以r在Proto->k中的下标为值往FuncState->h插入键值对
+// 返回r在Proto->k中的下标
 int luaK_numberK (FuncState *fs, lua_Number r) {
   TValue o;
   setnvalue(&o, r); 
@@ -288,6 +298,8 @@ int luaK_numberK (FuncState *fs, lua_Number r) {
 }
 
 // 添加一个BOOL类型常量
+// 把布尔值b存入lua常量数组Proto->k, 以b为键，以b在Proto->k中的下标为值往FuncState->h插入键值对
+// 返回b在Proto->k中的下标
 static int boolK (FuncState *fs, int b) {
   TValue o;
   setbvalue(&o, b);
@@ -295,6 +307,8 @@ static int boolK (FuncState *fs, int b) {
 }
 
 // 添加一个nil值常量
+// 把nil存入lua常量数组Proto->k, 以FuncState->h为键，以nil在Proto->k中的下标为值往FuncState->h插入键值对
+// 返回nil在Proto->k中的下标
 static int nilK (FuncState *fs) {
   TValue k, v;
   setnilvalue(&v);
@@ -371,6 +385,7 @@ static int code_label (FuncState *fs, int A, int b, int jump) {
 }
 
 // 根据表达式的e->k载入寄存器
+// 根据表达式的类型和值以及寄存器的下标生成指令，存入Proto->code
 static void discharge2reg (FuncState *fs, expdesc *e, int reg) {
   luaK_dischargevars(fs, e);
   switch (e->k) {
@@ -421,6 +436,7 @@ static void discharge2anyreg (FuncState *fs, expdesc *e) {
 }
 
 // 将表达式e放入reg寄存器中
+// 根据表达式的类型和值以及寄存器的下标生成指令，存入Proto->code
 static void exp2reg (FuncState *fs, expdesc *e, int reg) {
   // 表达式e的结果存入寄存器reg中
   discharge2reg(fs, e, reg);
@@ -519,6 +535,7 @@ int luaK_exp2RK (FuncState *fs, expdesc *e) {
 }
 
 // 存入数据, var是左边,ex是右边,也就是值表达式
+// 
 void luaK_storevar (FuncState *fs, expdesc *var, expdesc *ex) {
   switch (var->k) {
     case VLOCAL: {
@@ -687,7 +704,9 @@ static void codenot (FuncState *fs, expdesc *e) {
   removevalues(fs, e->t);
 }
 
-
+// t的类型设为查表，t的辅助信息设为表达式k所在的寄存器或常量数组的下标
+// 由于t的值已经是表的寄存器
+// 所以整个函数的作用就是获取创建OP_GETTABLE指令的必要信息
 void luaK_indexed (FuncState *fs, expdesc *t, expdesc *k) {
   t->u.s.aux = luaK_exp2RK(fs, k);
   t->k = VINDEXED;
@@ -857,6 +876,8 @@ void luaK_fixline (FuncState *fs, int line) {
 
 // 将虚拟机机器指令压入Proto的code中,更新代码行在f的lineinfo数组中,同时更新pc指针
 // 这个函数的返回值是存放这段代码地址的pc指针
+// fs->pc是目前的指令数，也是下一条指令在f->code中的下标
+// 把指令i存入f->code[fs->pc], 自增fs->pc, 返回指令i在f->code中的下标
 static int luaK_code (FuncState *fs, Instruction i, int line) {
   Proto *f = fs->f;
   dischargejpc(fs);  /* `pc' will change */
@@ -872,6 +893,7 @@ static int luaK_code (FuncState *fs, Instruction i, int line) {
 }
 
 
+// 根据所给参数创建ABC指令并存入Proto->code中，返回指令在Proto->code中的下标
 int luaK_codeABC (FuncState *fs, OpCode o, int a, int b, int c) {
   lua_assert(getOpMode(o) == iABC);
   lua_assert(getBMode(o) != OpArgN || b == 0);
@@ -879,7 +901,7 @@ int luaK_codeABC (FuncState *fs, OpCode o, int a, int b, int c) {
   return luaK_code(fs, CREATE_ABC(o, a, b, c), fs->ls->lastline);
 }
 
-
+// 根据所给参数创建ABx指令并存入Proto->code中，返回指令在Proto->code中的下标
 int luaK_codeABx (FuncState *fs, OpCode o, int a, unsigned int bc) {
   lua_assert(getOpMode(o) == iABx || getOpMode(o) == iAsBx);
   lua_assert(getCMode(o) == OpArgN);

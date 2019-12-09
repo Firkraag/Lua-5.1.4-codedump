@@ -7,8 +7,8 @@
 # Your platform. See PLATS for possible values.
 PLAT= none
 
-CC= gcc
-CFLAGS= -O2 -Wall $(MYCFLAGS)
+CC= gcc -g
+CFLAGS= -O0 -Wall $(MYCFLAGS)
 AR= ar rcu
 RANLIB= ranlib
 RM= rm -f
@@ -35,8 +35,8 @@ LUA_O=	lua.o
 LUAC_T=	luac
 LUAC_O=	luac.o print.o
 
-ALL_O= $(CORE_O) $(LIB_O) $(LUA_O) $(LUAC_O)
-ALL_T= $(LUA_A) $(LUA_T) $(LUAC_T)
+ALL_O= $(CORE_O) $(LIB_O) $(LUA_O) $(LUAC_O) dofile_example.o parser_example.o
+ALL_T= $(LUA_A) $(LUA_T) $(LUAC_T) dofile_example parser_example
 ALL_A= $(LUA_A)
 
 default: $(PLAT)
@@ -56,6 +56,10 @@ $(LUA_T): $(LUA_O) $(LUA_A)
 
 $(LUAC_T): $(LUAC_O) $(LUA_A)
 	$(CC) -o $@ $(MYLDFLAGS) $(LUAC_O) $(LUA_A) $(LIBS)
+dofile_example: dofile_example.o $(LUA_A)
+	$(CC) -o $@ $(MYLDFLAGS) dofile_example.o $(LUA_A) $(LIBS)
+parser_example: parser_example.o $(LUA_A)
+	$(CC) -o $@ $(MYLDFLAGS) parser_example.o $(LUA_A) $(LIBS)
 
 clean:
 	$(RM) $(ALL_T) $(ALL_O)
@@ -178,5 +182,7 @@ lzio.o: lzio.c lua.h luaconf.h llimits.h lmem.h lstate.h lobject.h ltm.h \
   lzio.h
 print.o: print.c ldebug.h lstate.h lua.h luaconf.h lobject.h llimits.h \
   ltm.h lzio.h lmem.h lopcodes.h lundump.h
+dofile_example.o: dofile_example.c lua.h lauxlib.h
+parser_example.o: parser_example.c lua.h lauxlib.h
 
 # (end of Makefile)
