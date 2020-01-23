@@ -38,9 +38,11 @@ typedef enum UnOpr { OPR_MINUS, OPR_NOT, OPR_LEN, OPR_NOUNOPR } UnOpr;
 
 
 #define getcode(fs,e)	((fs)->f->code[(e)->u.s.info])
-
+// 生成iABx格式指令， 压入Proto的code中,更新代码行在f的lineinfo数组中,同时更新pc指针
+// fs->pc是目前的指令数，也是下一条指令在f->code中的下标
+// 把指令i存入f->code[fs->pc], 自增fs->pc, 返回指令i在f->code中的下标
 #define luaK_codeAsBx(fs,o,A,sBx)	luaK_codeABx(fs,o,A,(sBx)+MAXARG_sBx)
-
+// 假如e是函数调用，则把对应的指令中的R(C)设为0
 #define luaK_setmultret(fs,e)	luaK_setreturns(fs, e, LUA_MULTRET)
 
 LUAI_FUNC int luaK_codeABx (FuncState *fs, OpCode o, int A, unsigned int Bx);

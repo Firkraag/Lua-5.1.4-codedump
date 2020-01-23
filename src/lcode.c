@@ -59,6 +59,7 @@ void luaK_nil (FuncState *fs, int from, int n) {
 }
 
 // 生成一个跳转指令
+// 生成OP_JMP指令，把指令的sBx设为fs->jpc相对指令的偏移量,返回指令的pc
 int luaK_jump (FuncState *fs) {
   int jpc = fs->jpc;  /* save list of jumps to here */
   int j;
@@ -67,6 +68,7 @@ int luaK_jump (FuncState *fs) {
   // 注意这里返回的j指向的下一个PC指令的地址
   j = luaK_codeAsBx(fs, OP_JMP, 0, NO_JUMP);
   // 将之前的悬空跳转语句合起来, 这样所有悬空的跳转语句就形成了链表, 由jpc保存
+  // 指令j的sBx设为指令jpc相对j的偏移量
   luaK_concat(fs, &j, jpc);  /* keep them on hold */
   return j;
 }
@@ -83,6 +85,7 @@ static int condjump (FuncState *fs, OpCode op, int A, int B, int C) {
 }
 
 // 根据目标位置修改JMP指令跳转点位置
+// 把第pc条指令的sBx设为第dest条指令相对第pc条指令的偏移量
 static void fixjump (FuncState *fs, int pc, int dest) {
   Instruction *jmp = &fs->f->code[pc];
   int offset = dest-(pc+1);
@@ -104,6 +107,9 @@ int luaK_getlabel (FuncState *fs) {
 }
 
 //  获得跳转点
+// 从第pc个OP_JMP指令中获取链表上下一个OP_JMP指令的相对位置，
+// 然后计算出下一个指令的pc并返回；如果相对位置是NO_JUMP, 说明第pc个指令
+// 是链表上最后一个指令，返回NO_JUMP
 static int getjump (FuncState *fs, int pc) {
   int offset = GETARG_sBx(fs->f->code[pc]);
   if (offset == NO_JUMP)  /* point to itself represents end of list */
@@ -173,6 +179,9 @@ static void patchlistaux (FuncState *fs, int list, int vtarget, int reg,
 
 // 将jpc维护的空悬跳转点链表使用当前的pc位置进行回填
 static void dischargejpc (FuncState *fs) {
+  // fs->jpc是开关，如果fs->jpc等于NO_JUMP, 链表为空，不做回填
+  // 只有在luaK_patchtohere函数中，fs->jpc被设为链表表头，其他地方fs->jpc都是NO_JUMP
+  // 所以其他地方调用luaK_patchtohere后然后生成下一条指令时，就会调用本函数回填链表上的每一个指令
   patchlistaux(fs, fs->jpc, fs->pc, NO_REG, fs->pc);
   // 重置jpc为NO_JUMP
   fs->jpc = NO_JUMP;
@@ -196,7 +205,13 @@ void luaK_patchtohere (FuncState *fs, int list) {
   luaK_concat(fs, &fs->jpc, list);
 }
 
+
 // 以l2为跳转位置修正l1中存放的跳转链表中第一个还不知道跳转位置的跳转点数据
+// OP_JMP指令的链表是这样组织的：*l1是表头指令的pc，该指令的sBx是下一条指令的偏移量,
+// 这样我们能从每条指令的sBx找到链表上的下一条指令，最后一条指令的sBx为NO_JUMP.
+// l1是OP_JMP指令的链表，l2是下一条OP_JMP指令的pc，把l2追加到链表末尾
+// 如果l2等于NO_JUMP，说明l2不是指令的pc，直接返回
+// 如果*l1等于NO_JUMP，说明链表为空，把l2设为表头
 void luaK_concat (FuncState *fs, int *l1, int l2) {
   // 如果l2就不是一个跳转目标,那么直接返回
   if (l2 == NO_JUMP) return;
@@ -210,6 +225,8 @@ void luaK_concat (FuncState *fs, int *l1, int l2) {
     while ((next = getjump(fs, list)) != NO_JUMP)  /* find last element */
       list = next;
     // fix跳转点
+    // 此时list是链表上最后一条指令
+    // 把list的sBx设为l2相对list的偏移量
     fixjump(fs, list, l2);
   }
 }
@@ -318,6 +335,7 @@ static int nilK (FuncState *fs) {
 }
 
 // ???????
+// 假如e是函数调用，把对应的指令中的R(C)设为返回值数量加1
 void luaK_setreturns (FuncState *fs, expdesc *e, int nresults) {
   if (e->k == VCALL) {  /* expression is an open function call? */
     SETARG_C(getcode(fs, e), nresults+1);
@@ -468,6 +486,7 @@ static void exp2reg (FuncState *fs, expdesc *e, int reg) {
 }
 
 // 讲表达式dump到当前栈的下一个位置中
+// 确定表达式存入的寄存器，根据表达式的类型和值以及寄存器的下标生成指令，存入Proto->code
 void luaK_exp2nextreg (FuncState *fs, expdesc *e) {
   // 首先如果是一个变量的话 现在根据变量类型(upval, GLOBAL, LOCAL)dump出来
   luaK_dischargevars(fs, e);
@@ -479,6 +498,7 @@ void luaK_exp2nextreg (FuncState *fs, expdesc *e) {
 }
 
 // 返回值是寄存器索引(与luaK_exp2nextreg的区别和联系是？？？？？？)
+// 生成指令，存入Proto->code, 返回表达式e的值所在的寄存器下标
 int luaK_exp2anyreg (FuncState *fs, expdesc *e) {
   // 首先要把变量dump出来
   luaK_dischargevars(fs, e);
@@ -505,6 +525,7 @@ void luaK_exp2val (FuncState *fs, expdesc *e) {
 }
 
 
+// 把e存入常量数组，返回数组下标，或存入寄存器，返回寄存器下标 
 int luaK_exp2RK (FuncState *fs, expdesc *e) {
   luaK_exp2val(fs, e);
   switch (e->k) {
@@ -535,7 +556,8 @@ int luaK_exp2RK (FuncState *fs, expdesc *e) {
 }
 
 // 存入数据, var是左边,ex是右边,也就是值表达式
-// 
+// var的类型可能为VLOCAL, VUPVAL, VGLOBAL, VINDEXED
+// 根据var的类型生成不同的指令，将ex存入栈、全局数组、闭包或某一个表
 void luaK_storevar (FuncState *fs, expdesc *var, expdesc *ex) {
   switch (var->k) {
     case VLOCAL: {
@@ -606,7 +628,7 @@ static int jumponcond (FuncState *fs, expdesc *e, int cond) {
   return condjump(fs, OP_TESTSET, NO_REG, e->u.s.info, cond);
 }
 
-
+// 
 void luaK_goiftrue (FuncState *fs, expdesc *e) {
   // pc存放的是假如e为FALSE时的指令地址
   int pc;  /* pc of last jump */
@@ -713,6 +735,7 @@ void luaK_indexed (FuncState *fs, expdesc *t, expdesc *k) {
 }
 
 // 常量展开,能少一条指令,仅当两者都是数字时才能这样优化
+// 如果e1和e2都是数值，我们在编译过程中就算出结果，存入e1
 static int constfolding (OpCode op, expdesc *e1, expdesc *e2) {
   lua_Number v1, v2, r;
   if (!isnumeral(e1) || !isnumeral(e2)) return 0;
@@ -738,7 +761,10 @@ static int constfolding (OpCode op, expdesc *e1, expdesc *e2) {
   return 1;
 }
 
-
+// 
+// 如果e1和e2都是数值，我们在编译时就能算出运算结果，存入e1, 这样就可以少执行一条指令
+// 否则我们就要计算出e1和e2存入寄存器或常量数组的下标, 生成运算指令，设为e1的值
+// 此时我们不知道R(A)的值, 所以e1的类型为重定位
 static void codearith (FuncState *fs, OpCode op, expdesc *e1, expdesc *e2) {
   if (constfolding(op, e1, e2))
     return;
@@ -775,6 +801,7 @@ static void codecomp (FuncState *fs, OpCode op, int cond, expdesc *e1,
 }
 
 // 处理一元操作符的情况
+// 处理后e的类型和值是一元运算符运算结果的类型和值
 void luaK_prefix (FuncState *fs, UnOpr op, expdesc *e) {
   expdesc e2;
   e2.t = e2.f = NO_JUMP; e2.k = VKNUM; e2.u.nval = 0;
@@ -795,7 +822,7 @@ void luaK_prefix (FuncState *fs, UnOpr op, expdesc *e) {
   }
 }
 
-
+// 
 void luaK_infix (FuncState *fs, BinOpr op, expdesc *v) {
   switch (op) {
     case OPR_AND: {
